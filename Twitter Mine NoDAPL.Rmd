@@ -1,0 +1,272 @@
+---
+title: "Twitter Mining #NoDAPL"
+author: "Lucia Yu"
+date: "November 16, 2016"
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+---
+
+```{r}
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+##Language Modeling and Supervised Learning
+
+From Nov. 3 2016, the 1000 most recent tweets that were related to "#NoDAPL" were retrieved. This hashtag was generated in response to the proposed pipeline to run through North Dakota transporting oil across federally designated Native American property.The following code will clean and utilize Support Vector Machines (SVM) and n-grams to examine any possible gendered characteristics of protest language.
+
+```{r, setupTwitter, echo = TRUE, eval = FALSE}
+#install packages
+library(twitteR)
+library(ngram)
+library(quanteda)
+library(ngram)
+library(SnowballC)
+library(tm)
+library(slam)
+
+
+#setup credentials hidden below
+
+#consumerKey <- XXX
+#consumerSecret <- XXX
+#accessToken <- XXX
+#accessSecret <- XXX
+#setup_twitter_oauth(consumerKey, consumerSecret, accessToken, accessSecret)
+
+#retrieve 1000 tweets (status object) -- original search
+
+#tw <- searchTwitter("#NoDAPL", n = 1000, lang = "en", resultType = "recent")
+#sinceID <- status.all[100,]$id
+#maxID <- status.all[1,]$id
+
+#to have one static set of tweets, will search tweets with maxID of the last user in the original search
+tw <- searchTwitter("#NoDAPL", n = 1000, lang = "en", resultType = "recent", maxID = 794215463525855232)
+write.table(status.all1, "~/Documents/Data Science/Assignments/Assignment4/status.all1.txt", sep="\t")
+
+#take screenName variable and make into list for easier extraction
+status.screenName <- as.list(status.all$screenName)
+head(status.screenName)
+tail(status.screenName)
+
+#write a function to extract profileImageUrl for 100 users into a list
+result.df <- as.data.frame(matrix(ncol = 1, nrow = 1))
+extract.profileImageUrl <- function(x){
+  i = as.integer(0)
+  for (i in 1:250){
+    result <- as.character(getUser(x[i])$profileImageUrl)
+    result.df <- rbind(result.df, result)
+    i = i + 1
+  }
+  return (result.df)
+}
+list.profileImageUrl <- as.data.frame(extract.profileImageUrl(status.screenName)[-1,], 
+                                      stringsAsFactors = FALSE)
+colnames(list.profileImageUrl) <- "profileImageUrl"
+head(list.profileImageUrl)
+
+#insert list as column in status.all dataframe
+status.all <- cbind(status.all, list.profileImageUrl)
+url250 <- status.all$profileImageUrl[1:250]
+status.all$profileImageUrl[251:1000] <- NA
+
+#export list to textfile
+write.table(url250, "~/Documents/Data Science/Assignments/Assignment4/url250.txt", sep="\t")
+
+#after hand labeling, import the labels into status.all with column name "genderLabel"
+labels <- read.csv("~/Documents/Data Science/Assignments/Assignment4/genderlabelsoutput.txt", stringsAsFactors=FALSE, header = FALSE)
+colnames(labels) <- "genderLabel"
+
+
+#add genderLabel column into status.all (208 users were examined to get 100 gender labels)
+#extend labels to have 1000 rows
+filler <- data.frame(matrix(ncol = 1, nrow = 792))
+labels <- rbind(labels, filler)
+status.all <- cbind(status.all, labels)
+head(status.all$genderLabel)
+
+#saved search into txt file, reimport to analyze static dataset
+tw <- read.csv("~/Documents/Data Science/Assignments/Assignment4/cleandapl.csv",stringsAsFactors=TRUE, header = FALSE)
+
+
+```
+
+```{r, previews}
+tw <- read.csv("~/Documents/Data Science/Assignments/Assignment4/cleandapl.csv",stringsAsFactors=TRUE, header = FALSE)
+cnames <- tw[1,]
+colnames(tw) <- c("NA", "text", "screenName", "retweetCount", "profileImageUrl", "genderLabel")
+tw <- tw[-1,-1]
+head(tw)
+
+#100 gender labels
+summary(tw$genderLabel)
+
+```
+
+In cleaning the text data from the tweets for the search query "#NoDAPL", removal of punctuation, urls, whitespace and changing all letters to lowercase were necessary for uniform text analysis. Word stemming was not considered an issue in analyzing the tweets due to the imminent nature of the protests, and references to other tenses were largely absent.
+
+```{r, textAnalysis, warning=FALSE}
+#download libraries
+library(tm)
+library(wordcloud)
+
+#make into tm object
+documents <- Corpus(VectorSource(tw$text))
+male.documents <- Corpus(VectorSource((tw$text[(tw$genderLabel=='M') & (!is.na(tw$genderLabel))])))
+female.documents <- Corpus(VectorSource((tw$text[(tw$genderLabel=='F') & (!is.na(tw$genderLabel))])))
+
+#function to completely clean the document
+removeURL <- function(x) gsub('http.*\\s*', '', x)
+removeXFC <- function(x) gsub("[^[:print:]]", "", x)
+CleanDocuments <- function(x){
+  
+  documentsClean <- tm_map(x, content_transformer(removeURL))
+  documentsClean <- tm_map(documentsClean, content_transformer(removeXFC))
+  documentsClean <- tm_map(documentsClean, removePunctuation)
+  documentsClean <- tm_map(documentsClean, content_transformer(tolower))
+  documentsClean <- tm_map(documentsClean, removeNumbers)
+  documentsClean <- tm_map(documentsClean, removeWords, c("nodapl", "amp", "rt", "standing", "standingrock", "dakota", "pipeline", "rock"))
+  documentsClean <- tm_map(documentsClean, removeWords, stopwords("english"))
+  documentsClean <- tm_map(documentsClean, stripWhitespace)
+  return(documentsClean)
+}
+
+#function to show the first 6 texts of document
+showHead <- function(doc, x) {
+  i = 1
+  while(i <= x) 
+  {
+  result <- doc[[i]]$content
+  i = i + 1
+  print(result)
+  }
+  return(result)
+}
+
+#clean the entire corpus, male corpus and female corpus
+documentsClean <- CleanDocuments(documents)
+male.documentsClean <- CleanDocuments(male.documents)
+female.documentsClean <- CleanDocuments(female.documents)
+
+#show top six texts of corpus, male corpus and female corpus
+topTw <- showHead(documentsClean, 15)
+male.topTw <- showHead(male.documentsClean, 15)
+female.topTw <- showHead(female.documentsClean, 15)
+
+#generate wordcloud
+wordcloud(documentsClean, title = "All Tweets")
+wordcloud(male.documentsClean, title = "Male Tweets")
+wordcloud(female.documentsClean, title = "Female Tweets")
+```
+
+#SVM and Ngram
+
+Comparing the different ngram models for the total corpus of text, it becomes apparent that the most relevant model is the trigram model. This is because the trigram model provides the most context in terms of conveying sentiment about the Dakota Access Pipeline Protests. For example, where 'states' and 'united states' appear in the top occurrances for the unigram and bigram model respectively, the trigram model adds a crucial, additional element with 'united states abusing' and 'history united states'. With the added words 'abusing' and 'history' we can gather a sense of historical wrongdoing and the impact of legacies of colonialism with regard to Native American communities. 
+
+The word cloud for the subset of male and female data show that there is much similarity between the words used by both genders. The language used to talk about the Dakota Access Pipeline can be said to be non-gendered.
+
+The SVM model most accurately predicts instances of female language for both the unigram and trigram models. This may be due to the oversampling of female words/phrases compared to male words/phrases. However, overall the SVM model is mostly accurate. If for example you were to sample solely the unigram model where the training set is 75% of the labeled data and the test set is 25% of the labeled data, the accuracy of predicting females is 17/20 and the accuracy for predicting males is 3/5. Predictions of both genders are over 50%. The 75:25 training:test set ratio was chosen in this way in the hopes of helping to more accurately assess the males since the female:male ratio is more female.
+
+```{r, ngram, warning=FALSE}
+#perform ngram tokenization
+library(ngram)
+library(quanteda)
+library(SnowballC)
+library(slam)
+library(RWeka)
+library(RTextTools)
+library(e1071)
+
+#create dtm
+dtm <- DocumentTermMatrix(documentsClean)
+male.dtm <- DocumentTermMatrix(male.documentsClean)
+female.dtm <- DocumentTermMatrix(female.documentsClean)
+
+#sort unigrams
+unigram.sorted <- sort(col_sums(dtm), decreasing=T)
+male.unigram.sorted <- sort(col_sums(male.dtm), decreasing=T)
+female.unigram.sorted <- sort(col_sums(female.dtm), decreasing=T)
+
+#top 10 unigrams
+top10.uni <- unigram.sorted[1:10]
+male.top10.uni <- male.unigram.sorted[1:10]
+female.top10.uni <- female.unigram.sorted[1:10]
+
+top10.uni
+male.top10.uni
+female.top10.uni
+
+#tokenizers
+options(mc.cores=1)
+BigramTokenizer <-function(x)unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+TrigramTokenizer <-function(x)unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+
+#bigram -- ALL
+bigram <- DocumentTermMatrix(documentsClean, control = list(tokenize = BigramTokenizer))
+bigram.sorted <- sort(col_sums(bigram), decreasing=T)
+top10.bi <- bigram.sorted[1:10]
+top10.bi
+
+#function to generate trigrams & print the top 50 trigrams
+generateTrigram <- function(x){
+  trigram <- DocumentTermMatrix(x, control = list(tokenize = TrigramTokenizer))
+  trigram.sorted <- sort(col_sums(trigram), decreasing=T)
+  top10.tri <- trigram.sorted[1:10]
+  print(top10.tri)
+  return(trigram)
+}
+
+#call to generate trigrams
+all.trigram <- generateTrigram(documentsClean)
+m.trigram <- generateTrigram(male.documentsClean)
+f.trigram <- generateTrigram(female.documentsClean)
+```
+
+```{r, ngramHide, results = 'hide'}
+#take dtm and cbind with all gender labels
+whole.df <- cbind(tw$genderLabel, data.frame(inspect(dtm)))
+whole.df <- whole.df[(!is.na(whole.df$`tw$genderLabel`)),]
+```
+
+```{r, SVM, warning = FALSE}
+whole.df <- whole.df[(!is.na(whole.df$`tw$genderLabel`)),]
+#data matrix, x
+df.nogender.train <- whole.df[c(1:75),-c(1)]
+df.nogender.test <- whole.df[c(76:100),-c(1)]
+#response vector
+genderFeature.train <- whole.df[c(1:75),1]
+genderFeature.test <- whole.df[c(76:100),1]
+
+#svm -- unigram
+model <- svm(df.nogender.train, genderFeature.train, kernel = "linear")
+summary(model)
+pred <- predict(model, df.nogender.test)
+pred
+table(pred, genderFeature.test)
+
+#svm2
+modelR <- svm(df.nogender.test, genderFeature.test, kernel = "linear")
+summary(modelR)
+predR <- predict(modelR, df.nogender.train)
+predR
+table(predR, genderFeature.train)
+```
+
+```{r, SVMHide,  results = 'hide', warning = FALSE}
+#svm -- trigram
+whole.dfTri <- cbind(tw$genderLabel, data.frame(inspect(all.trigram)))
+whole.dfTri <- whole.dfTri[(!is.na(whole.dfTri$`tw$genderLabel`)),]
+```
+
+```{r, SVMShow, warning = FALSE}
+df.nogenderTri.train <- whole.dfTri[c(1:75),-c(1)]
+df.nogenderTri.test <- whole.dfTri[c(76:100),-c(1)]
+
+genderFeatureTri.train <- whole.dfTri[c(1:75),1]
+genderFeatureTri.test <- whole.dfTri[c(76:100),1]
+
+model3 <- svm(df.nogenderTri.train, genderFeatureTri.train, kernel = "linear")
+pred3 <- predict(model3, df.nogenderTri.test)
+pred3
+table(pred3, genderFeatureTri.test)
+```
